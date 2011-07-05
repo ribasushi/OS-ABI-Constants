@@ -131,7 +131,7 @@ sub examine_abi {
     $my_abi->{$type}{$_} = undef for @consts;
 
     $c_src .= "int main (void)\n{\n";
-    $c_src .= "'$_' => \n__VALUE__START__\n$_\n__VALUE__END__\n,\n" for @consts;  # the 
+    $c_src .= "'$_' => \n'__VALUE__START__'\n$_\n'__VALUE__END__'\n,\n" for @consts;
     $c_src .= "}\n";
 
     my $out = _run_cc (
@@ -139,7 +139,7 @@ sub examine_abi {
       $c_src,
     );
 
-    $out =~ s/ \n__VALUE__START__\n (.+?) \n__VALUE__END__\n /B::perlstring($1)/egxms;
+    $out =~ s/ \n'__VALUE__START__'\n (.+?) \n'__VALUE__END__'\n /B::perlstring($1)/egxms;
     my ($resolved) = $out =~ /^int \s main \s \(void\) \n ( \{ .+? \} ) $/xms;
 
     $my_abi->{$type} = eval $resolved or die "Unable to eval preprocessed pseudo-source:\n$@";
