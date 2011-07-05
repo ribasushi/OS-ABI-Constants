@@ -84,7 +84,6 @@ sub examine_abi {
   require IPC::Open3;
   require B;
   require Config;
-  require Data::Dumper;
 
   my $examine = {
     time => {
@@ -124,19 +123,10 @@ sub examine_abi {
       $c_src .= sprintf "#include %s\n", $_ =~ m|^/| ? qq|"$_"| : "<$_>";
     }
 
-    my %io = map { $_ => IO::Handle->new } qw/i o e/;
-    my @args = qw/-E -dD -/;
-    my $pid = IPC::Open3::open3 (@io{qw/i o e/}, $cc, @args)
-      or die "Unable to start $cc @args";
-
-    $io{i}->print( $c_src );
-    $io{i}->close;
-
-    my @consts = map { $_ =~ $qr ? $1 : () } $io{o}->getlines;
-    wait;
-    warn "$cc @args exited with status $?\n" if $?;
-
-    next unless @consts;
+    my @consts = map { $_ =~ $qr ? $1 : () } split /\n+/, _run_cc (
+      [ $cc, qw/-E -dD/ ],
+      $c_src,
+    ) or next;
 
     $my_abi->{$type}{$_} = undef for @consts;
 
@@ -144,24 +134,60 @@ sub examine_abi {
     $c_src .= "'$_' => \n__VALUE__START__\n$_\n__VALUE__END__\n,\n" for @consts;  # the 
     $c_src .= "}\n";
 
-    @args = qw/-E -/;
-    $pid = IPC::Open3::open3 (@io{qw/i o e/}, $cc, @args)
-      or die "Unable to run $cc @args";
+    my $out = _run_cc (
+      [ $cc, '-E' ],
+      $c_src,
+    );
 
-    $io{i}->print( $c_src );
-    $io{i}->close;
-
-    my ($resolved) = do {
-      local $/;
-      my $preprocessed = $io{o}->getline;
-      $preprocessed =~ s/ \n__VALUE__START__\n (.+?) \n__VALUE__END__\n /B::perlstring($1)/egxms;
-      $preprocessed =~ /^int \s main \s \(void\) \n ( \{ .+? \} ) $/xms;
-    };
-    wait;
-    warn "$cc @args exited with status $?\n" if $?;
+    $out =~ s/ \n__VALUE__START__\n (.+?) \n__VALUE__END__\n /B::perlstring($1)/egxms;
+    my ($resolved) = $out =~ /^int \s main \s \(void\) \n ( \{ .+? \} ) $/xms;
 
     $my_abi->{$type} = eval $resolved or die "Unable to eval preprocessed pseudo-source:\n$@";
   }
 
   $my_abi;
+}
+
+# use this in lieu of IPC::Run to avoid configure_requires hell, and to not shove
+# the dep down everyone's throats (only Win32 can't do open3 IO reliably)
+sub _run_cc {
+  my ($cmd, $stdin) = @_;
+
+  my ($infh, $infn);
+  if ($^O eq 'MSWin32') {
+    require File::Temp;
+    $infn = File::Temp->new( UNLINK => 1, SUFFIX => '.c' );
+    $infn->print ($stdin);
+    $infn->close;
+    push @$cmd, "$infn";
+  }
+  else {
+    $infh = IO::Handle->new;
+    push @$cmd, '-';
+  }
+
+  my $outfh = IO::Handle->new;
+
+  my $pid = IPC::Open3::open3 (
+    $infh,
+    $outfh,
+    undef,
+    @$cmd,
+  ) or die "open3 of '@$cmd' failed: $!\n";
+
+  if ($infh) {
+    $infh->print($stdin);
+    $infh->close;
+  }
+
+  my $out = do { local $/; $outfh->getline };
+
+  wait;
+
+  warn sprintf("'%s' did not terminate cleanly (exit %d)\n",
+    (join ' ', @$cmd),
+    $? >> 8,
+  ) if $?;
+
+  return $out;
 }
