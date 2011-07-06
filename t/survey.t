@@ -17,6 +17,7 @@ my $survey = {
   sysinfo => OS::ABI::Constants->sysinfo,
 };
 
+sleep 1;  # attempt to sync STDOUT/ERR
 printf STDERR (
 "
 === BEGIN ABI Survey: %s for perl %s on %s%s
@@ -29,5 +30,6 @@ printf STDERR (
   $survey->{sysinfo}{os}{fullname},
   OS::ABI::Constants::__encode_struct ($survey),
 );
+sleep 1;
 
 done_testing;
