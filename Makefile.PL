@@ -160,7 +160,7 @@ sub examine_abi {
     }
 
     my ($out, $err) = _run_cc (
-      [ $cc, qw/-E -dD/ ],
+      [ $cc, qw/-E -dM/ ],
       $c_src,
     );
     if ($err) {
