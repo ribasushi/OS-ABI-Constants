@@ -5,12 +5,12 @@ use strict;
 
 use 5.006002;
 
-our $VERSION = '0.00_01'; # pre-alpha - this is the smoker survey stage!
+our $VERSION = '0.00_02'; # pre-alpha - this is the smoker survey stage!
 
 # init our namespace
 my $known_constants = { map
   { %$_ }
-  values %{ constants() }
+  values %{ constants() || {} }
 };
 eval "sub $_ () { $known_constants->{$_} }" for keys %$known_constants;
 
@@ -54,6 +54,7 @@ sub constants {
   else {
     # TODO - unimplemented
     # need to invoke sysinfo and return constants determined by the survey
+    {},
   }
 }
 
@@ -79,6 +80,22 @@ sub sysinfo {
     },
     perl => { %Config::Config },  # lose the tie
   }
+}
+
+sub __encode_struct {
+  require Storable;
+  require IO::Compress::Bzip2;
+  require MIME::Base64;
+
+  my $blob = do { no warnings 'once'; local $Storable::canoncial = 1; Storable::nfreeze(shift) };
+  my $bz2;
+  IO::Compress::Bzip2::bzip2 (\$blob, \$bz2,
+    BlockSize100K => 9,
+    WorkFactor => 250,
+  );
+  my $enc = MIME::Base64::encode_base64($bz2);
+  chomp $enc;
+  return $enc;
 }
 
 1;

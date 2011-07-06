@@ -5,22 +5,51 @@ use inc::Module::Install '1.01';
 
 use 5.006002;
 
+use File::Spec;
+my $IS_SMOKER = (
+  $ENV{AUTOMATED_TESTING}
+    and
+  ! $ENV{PERL5_CPANM_IS_RUNNING}
+    and
+  ! $ENV{RELEASE_TESTING}
+    and
+  ! -d '.git'
+    and
+  -d 'inc'
+    and
+  ! -e File::Spec->catfile('inc', $^O eq 'VMS' ? '_author' : '.author')
+);
+
+
 all_from 'lib/OS/ABI/Constants.pm';
 
 requires 'Sys::Info' => '0.78';
 
 if (my $cc = can_cc) {
+  # this is a horrendous hack to force an UNKNOWN report as opposed to N/A
+  # because of the destructiveness we go to great lengths above to make sure
+  # we are in fact a smoker
+  local $SIG{__DIE__} = sub {
+    my $err = shift;
+
+    require File::Path;
+    File::Path::rmtree('t');
+
+    die "$err\n";
+  } if $IS_SMOKER;
+
   gen_my_abi($cc);
 }
 ### FIXME - temporary, for the duration of the survey
 else {
-  die "The survey stage requires a compiler\n";
+  warn "The survey stage requires a compiler\n";
+  exit 1;
 }
 
 # these are also temporary
-test_requires 'MIME::Base64' => 0;
-test_requires 'IO::Compress::Bzip2' => 0;
-test_requires 'Storable' => 0;
+configure_requires 'MIME::Base64' => 0;
+configure_requires 'IO::Compress::Bzip2' => 0;
+configure_requires 'Storable' => 0;
 
 resources 'repository'  => 'http://github.com/ribasushi/OS-ABI-Constants';
 
@@ -29,7 +58,7 @@ WriteAll;
 sub gen_my_abi {
   my $cc = shift;
 
-  warn "C compiler detected - gathering ABI constants from your system\n";
+  warn "C compiler `$cc` detected - gathering ABI constants from your system\n";
   my $abi = examine_abi($cc);
 
   my $fn = 'lib/OS/ABI/MyConstants.pm';
@@ -73,7 +102,10 @@ EOC
 
   }
   else {
-    warn "No constants returned by ABI examination - skipping creatioin of $fn\n";
+    warn "No interesting constants found during ABI examination - skipping creation of $fn\n";
+    # FIXME - temporary
+    warn "No reason to continue during survey stage - exiting\n";
+    exit 1;
   }
 }
 
@@ -90,6 +122,8 @@ sub examine_abi {
       headers => {
         generic => [ $Config::Config{timeincl} ? split / /, $Config::Config{timeincl} : 'time.h' ],
         linux => [qw| linux/time.h time.h |],
+        MSWin32 => undef, # win32 pretty much does not support *ANY* of the POSIX time stuff,
+                          # Time::HiRes ends up emulating everything :(
       },
       defs => qr/
         ITIMER_\w+ | CLOCK_\w+
@@ -107,26 +141,36 @@ sub examine_abi {
     # others...?
   };
 
-  my $my_abi;
+  my ($my_abi, $errors);
 
   for my $type (keys %$examine) {
     $my_abi->{$type} = {};
 
+    my $h = $examine->{$type}{headers};
+    $h = ( exists $h->{$^O} ? $h->{$^O} : $h->{generic} );
+
+    next unless defined $h;
+
     my $qr = sprintf '^ \#define \s+ ( %s ) \s+ \S', $examine->{$type}{defs};
     $qr = qr/$qr/x;
-
-    my $h = $examine->{$type}{headers};
-    $h = ( $h->{$^O} || $h->{generic} );
 
     my $c_src;
     for (ref $h eq 'ARRAY' ? @$h : $h) {
       $c_src .= sprintf "#include %s\n", $_ =~ m|^/| ? qq|"$_"| : "<$_>";
     }
 
-    my @consts = map { $_ =~ $qr ? $1 : () } split /\n+/, _run_cc (
+    my ($out, $err) = _run_cc (
       [ $cc, qw/-E -dD/ ],
       $c_src,
-    ) or next;
+    );
+    if ($err) {
+      warn "Execution of `$err->{cmd}` failed ($err->{exit})\n";
+      $errors->{$type} = $err;
+      next;
+    }
+
+    my @consts = map { $_ =~ $qr ? $1 : () } split /\n+/, $out
+      or next;
 
     $my_abi->{$type}{$_} = undef for @consts;
 
@@ -134,15 +178,52 @@ sub examine_abi {
     $c_src .= "'$_' => \n'__VALUE__START__'\n$_\n'__VALUE__END__'\n,\n" for @consts;
     $c_src .= "}\n";
 
-    my $out = _run_cc (
+    ($out, $err) = _run_cc (
       [ $cc, '-E' ],
       $c_src,
     );
+    if ($err) {
+      warn "Execution of `$err->{cmd}` failed ($err->{exit})\n";
+      $errors->{$type} = $err;
+      next;
+    }
 
     $out =~ s/ \n'__VALUE__START__'\n (.+?) \n'__VALUE__END__'\n /B::perlstring($1)/egxms;
-    my ($resolved) = $out =~ /^int \s main \s \(void\) \n ( \{ .+? \} ) $/xms;
+    if ( my ($resolved) = $out =~ /^int \s main \s \(void\) \n ( \{ .+? \} ) $/xms ) {
+      $my_abi->{$type} = eval $resolved or die "Unable to eval preprocessed pseudo-source:\n$@";
+    }
 
-    $my_abi->{$type} = eval $resolved or die "Unable to eval preprocessed pseudo-source:\n$@";
+  }
+
+  # shit hit the fan - die if a smoker, otherwise just warn (the error struct is rather small)
+  if ($errors) {
+    unshift @INC, 'lib';
+    if (
+      eval { require OS::ABI::Constants }
+        and
+      my $enc = OS::ABI::Constants::__encode_struct ($errors)
+    ) {
+      $errors =
+"
+=== BEGIN ABI Survey Errors
+$enc
+=== END ABI Survey Errors
+"
+      ;
+    }
+    else {
+      my $oac_encode_error = $@ || 'UNKNOWN';
+      chomp $oac_encode_error;
+      require Data::Dumper;
+      $errors =
+          "Error (encoding failed due to $oac_encode_error)\n\n"
+        . Data::Dumper->new([ $errors ])->Indent(1)->Terse(1)->Quotekeys(0)->Sortkeys(1)->Pad('  ')->Dump
+      ;
+    }
+
+    die $errors if $IS_SMOKER;
+
+    warn $errors;
   }
 
   $my_abi;
@@ -171,7 +252,7 @@ sub _run_cc {
   my $pid = IPC::Open3::open3 (
     $infh,
     $outfh,
-    undef,
+    undef,  # splitting out/err will hang on win32
     @$cmd,
   ) or die "open3 of '@$cmd' failed: $!\n";
 
@@ -184,10 +265,17 @@ sub _run_cc {
 
   wait;
 
-  warn sprintf("'%s' did not terminate cleanly (exit %d)\n",
-    (join ' ', @$cmd),
-    $? >> 8,
-  ) if $?;
-
-  return $out;
+  if (my $ex = $?) {
+    return (undef, {
+      cmd => ( join ' ', @$cmd ),
+      exit => $ex >> 8,
+      signal => $ex & 127,
+      coredump => ($ex & 128) ? 'Y' : 'N',
+      stdin => $stdin,
+      stdouterr => $out,
+    });
+  }
+  else {
+    return $out;
+  }
 }
