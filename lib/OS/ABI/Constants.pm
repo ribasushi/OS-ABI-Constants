@@ -5,7 +5,7 @@ use strict;
 
 use 5.006002;
 
-our $VERSION = '0.00_02'; # pre-alpha - this is the smoker survey stage!
+our $VERSION = '0.00_03'; # pre-alpha - this is the smoker survey stage!
 
 # init our namespace
 my $known_constants = { map

@@ -32,10 +32,12 @@ if (my $cc = can_cc) {
   local $SIG{__DIE__} = sub {
     my $err = shift;
 
+    # this is not guaranteed to work, but could :)
     require File::Path;
     File::Path::rmtree('t');
-
-    die "$err\n";
+    print STDERR "$err\n";
+    WriteAll;
+    exit 0;
   } if $IS_SMOKER;
 
   gen_my_abi($cc);
@@ -43,7 +45,7 @@ if (my $cc = can_cc) {
 ### FIXME - temporary, for the duration of the survey
 else {
   warn "The survey stage requires a compiler\n";
-  exit 1;
+  exit 0;
 }
 
 # these are also temporary
@@ -105,7 +107,7 @@ EOC
     warn "No interesting constants found during ABI examination - skipping creation of $fn\n";
     # FIXME - temporary
     warn "No reason to continue during survey stage - exiting\n";
-    exit 1;
+    exit 0;
   }
 }
 
@@ -117,10 +119,12 @@ sub examine_abi {
   require B;
   require Config;
 
+  my @ccflags = split / /, $Config::Config{ccflags};
+
   my $examine = {
     time => {
       headers => {
-        generic => [ $Config::Config{timeincl} ? split / /, $Config::Config{timeincl} : 'time.h' ],
+        generic => [ $Config::Config{timeincl} ? split / /, $Config::Config{timeincl} : 'sys/time.h' ],
         linux => [qw| linux/time.h time.h |],
         MSWin32 => undef, # win32 pretty much does not support *ANY* of the POSIX time stuff,
                           # Time::HiRes ends up emulating everything :(
@@ -132,7 +136,8 @@ sub examine_abi {
     # not everything implements syscall()
     ! $Config::Config{d_syscall} ? () : ( syscall => {
       headers => {
-        generic => 'syscall.h',
+        generic => 'sys/syscall.h',
+        linux => 'syscall.h',
       },
       defs => qr/
         SYS_[a-z]\w+
@@ -160,7 +165,7 @@ sub examine_abi {
     }
 
     my ($out, $err) = _run_cc (
-      [ $cc, qw/-E -dM/ ],
+      [ $cc, @ccflags, qw/-E -dM/ ],
       $c_src,
     );
     if ($err) {
@@ -169,8 +174,13 @@ sub examine_abi {
       next;
     }
 
-    my @consts = map { $_ =~ $qr ? $1 : () } split /\n+/, $out
-      or next;
+    my @consts = map { $_ =~ $qr ? $1 : () } split /\n+/, $out;
+
+    # consider lack of detected constants as error - give the -dM output
+    unless (@consts) {
+      $errors->{$type} = $out;
+      next;
+    }
 
     $my_abi->{$type}{$_} = undef for @consts;
 
@@ -179,7 +189,7 @@ sub examine_abi {
     $c_src .= "}\n";
 
     ($out, $err) = _run_cc (
-      [ $cc, '-E' ],
+      [ $cc, @ccflags, '-E' ],
       $c_src,
     );
     if ($err) {
@@ -197,6 +207,8 @@ sub examine_abi {
 
   # shit hit the fan - die if a smoker, otherwise just warn (the error struct is rather small)
   if ($errors) {
+    $errors->{_perl_conf} = { %Config::Config };
+
     unshift @INC, 'lib';
     if (
       eval { require OS::ABI::Constants }
