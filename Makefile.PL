@@ -119,6 +119,8 @@ sub examine_abi {
   require B;
   require Config;
 
+  my $quoter = B->can( $] > 5.008 ? 'perlstring' : 'cstring' );
+
   my @ccflags = split / /, $Config::Config{ccflags};
 
   my $examine = {
@@ -198,7 +200,7 @@ sub examine_abi {
       next;
     }
 
-    $out =~ s/ \n'__VALUE__START__'\n (.+?) \n'__VALUE__END__'\n /B::perlstring($1)/egxms;
+    $out =~ s/ \n'__VALUE__START__'\n (.+?) \n'__VALUE__END__'\n / $quoter->($1) /egxms;
     if ( my ($resolved) = $out =~ /^int \s main \s \(void\) \n ( \{ .+? \} ) $/xms ) {
       $my_abi->{$type} = eval $resolved or die "Unable to eval preprocessed pseudo-source:\n$@";
     }
