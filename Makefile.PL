@@ -4,6 +4,7 @@ use strict;
 use inc::Module::Install '1.01';
 
 use 5.006002;
+use Config;
 
 # this is used by gen_my_abi iff we detect a compiler toolchain
 # keeping it up here for easy reference
@@ -418,7 +419,6 @@ EOC
 
 # modelled on Module::Install::Can::can_cc
 sub can_cpp {
-  require Config;
   require Module::Install::Can;
   my @chunks = split(/ /,
     # activestate braindeath
