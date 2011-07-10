@@ -17,4 +17,4 @@ $in = decode_base64($in);
 my $out;
 bunzip2(\$in, \$out);
 
-print Data::Dumper->new([ thaw $out ])->Indent(1)->Terse(1)->Quotekeys(0)->Sortkeys(1)->Pad('  ')->Dump;
+print Data::Dumper->new([ thaw $out ])->Indent(1)->Terse(1)->Quotekeys(0)->Sortkeys(1)->Dump;

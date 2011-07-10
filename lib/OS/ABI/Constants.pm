@@ -5,14 +5,14 @@ use strict;
 
 use 5.006002;
 
-our $VERSION = '0.00_03'; # pre-alpha - this is the smoker survey stage!
+our $VERSION = '0.00_04'; # pre-alpha - this is the smoker survey stage!
 
 # init our namespace
 my $known_constants = { map
   { %$_ }
   values %{ constants() || {} }
 };
-eval "sub $_ () { $known_constants->{$_} }" for keys %$known_constants;
+eval "sub $_ () { $known_constants->{$_} }" for grep { defined $known_constants->{$_} } keys %$known_constants;
 
 
 sub import {
@@ -68,7 +68,7 @@ sub sysinfo {
   my @c = $c->identify;
 
   return {
-    fingerprint => 'will hash some crucial stuff here, TBD',
+    #fingerprint => 'will hash some crucial stuff here, TBD',
     os => {
       $o->meta,
       ( map { $_ => scalar $o->$_ } qw/bitness name version product_type/ ),
