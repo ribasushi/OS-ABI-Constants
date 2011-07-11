@@ -4,7 +4,7 @@
 use warnings;
 use strict;
 
-use Test::More;
+use Test::More tests => 1;
 
 use Storable 'nfreeze';
 use IO::Compress::Bzip2 'bzip2';
@@ -31,5 +31,3 @@ printf STDERR (
   OS::ABI::Constants::__encode_struct ($survey),
 );
 sleep 1;
-
-done_testing;
